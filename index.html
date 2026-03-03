@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备生命周期全景监控系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="mockData.js"></script>
+    <style>
+        /* 状态样式定义 */
+        .row-changed { background-color: #fffbeb; border-left: 4px solid #f59e0b; } /* 橙色条：今日有变动 */
+        .row-stable { border-left: 4px solid #e2e8f0; } /* 灰色条：长期稳定 */
+        
+        .diff-old { text-decoration: line-through; color: #94a3b8; font-size: 0.85rem; }
+        .diff-new { color: #10b981; font-weight: 700; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; }
+        
+        /* 侧边抽屉动画 */
+        #historyPanel { transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .panel-open { transform: translateX(0) !important; }
+        
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-[#f1f5f9] text-slate-800 antialiased">
+
+    <nav class="bg-white border-b border-slate-200 sticky top-0 z-50 px-6 py-4 shadow-sm">
+        <div class="max-w-[1600px] mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-4">
+                <div class="bg-indigo-600 p-2.5 rounded-xl shadow-lg">
+                    <i class="fas fa-database text-white text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-slate-900">全量资产生命周期审计库</h1>
+                    <p class="text-[10px] text-slate-400 font-medium uppercase tracking-widest">Unified Asset Lifecycle Database</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-8">
+                <div class="text-right border-r pr-6 border-slate-100">
+                    <div class="text-[10px] text-slate-400 font-bold uppercase">当前库内总数</div>
+                    <div class="text-xl font-black text-slate-800">45,281 <span class="text-xs font-normal text-slate-400">台</span></div>
+                </div>
+                <div class="text-right">
+                    <div class="text-[10px] text-amber-500 font-bold uppercase">今日生命周期波动</div>
+                    <div class="text-xl font-black text-amber-500">142 <span class="text-xs font-normal">台</span></div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-[1600px] mx-auto p-6">
+        
+        <div class="mb-6">
+            <div class="text-xs text-slate-400 font-medium mb-2">快速检索设备 (设备型号 / 部件编码)</div>
+            <div class="flex justify-between items-center">
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-3 text-slate-300"></i>
+                    <input type="text" placeholder="全局检索设备 SN、型号或批次..." class="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm w-96 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm transition-all">
+                </div>
+                <div class="flex gap-4 text-xs font-medium">
+                    <span class="flex items-center gap-1.5 text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-100"><i class="fas fa-circle text-[6px]"></i> 今日变动记录</span>
+                    <span class="flex items-center gap-1.5 text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100"><i class="fas fa-circle text-[6px]"></i> 长期稳定资产</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-slate-50 text-slate-400 text-[11px] font-bold uppercase tracking-wider">
+                        <th class="px-8 py-4">设备标识符 / 型号</th>
+                        <th class="px-6 py-4">资产类型</th>
+                        <th class="px-6 py-4">生命周期轨迹 (旧 → 新)</th>
+                        <th class="px-6 py-4">今日数据健康状态</th>
+                        <th class="px-6 py-4 cursor-pointer" onclick="sortByChangeCount()">
+                            累计变更次数
+                            <i id="sortIcon" class="fas fa-sort ml-1"></i>
+                        </th>
+                        <th class="px-8 py-4 text-right">历史溯源</th>
+                    </tr>
+                </thead>
+                <tbody id="deviceTableBody" class="divide-y divide-slate-100">
+                </tbody>
+            </table>
+            
+            <div class="px-8 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                <p id="paginationInfo" class="text-xs text-slate-400 font-medium">显示 1 到 10 条记录，共 15 条</p>
+                <div class="flex gap-1">
+                    <button id="prevPage" onclick="changePage(-1)" class="px-3 py-1 bg-white border border-slate-200 rounded text-xs hover:bg-slate-50">上一页</button>
+                    <button id="nextPage" onclick="changePage(1)" class="px-3 py-1 bg-white border border-slate-200 rounded text-xs hover:bg-slate-50">下一页</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <aside id="historyPanel" class="fixed top-0 right-0 h-full w-[480px] bg-white shadow-2xl z-[60] translate-x-full flex flex-col">
+        <div class="p-6 bg-slate-900 text-white flex justify-between items-center">
+            <div>
+                <h2 class="text-lg font-bold">全生命周期轨迹溯源</h2>
+                <p id="drawerSN" class="text-[10px] font-mono text-slate-400 mt-1"></p>
+            </div>
+            <button onclick="closeHistory()" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-800 transition-colors">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-8" id="timelineContainer">
+            </div>
+
+
+    </aside>
+
+    <div id="overlay" onclick="closeHistory()" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[55] hidden opacity-0 transition-opacity"></div>
+
+    <script>
+        // 全局变量
+        let currentPage = 1;
+        let pageSize = 10;
+        let currentSearch = '';
+        let currentSortBy = null;
+        let currentSortOrder = 'asc';
+        
+        // 初始化页面
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDevices();
+            
+            // 搜索框事件监听
+            const searchInput = document.querySelector('input[placeholder="全局检索设备 SN、型号或批次..."]');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    currentSearch = this.value;
+                    currentPage = 1; // 重置到第一页
+                    loadDevices();
+                });
+            }
+        });
+        
+        // 加载设备数据
+        function loadDevices() {
+            const result = getDevices({
+                page: currentPage,
+                pageSize: pageSize,
+                search: currentSearch,
+                sortBy: currentSortBy,
+                sortOrder: currentSortOrder
+            });
+            
+            renderDevices(result.data);
+            updatePagination(result);
+        }
+        
+        // 渲染设备数据
+        function renderDevices(devices) {
+            const tableBody = document.getElementById('deviceTableBody');
+            tableBody.innerHTML = '';
+            
+            devices.forEach(device => {
+                const row = document.createElement('tr');
+                row.className = `device-row ${device.isStable ? 'row-stable' : 'row-changed'} group hover:${device.isStable ? 'bg-slate-50' : 'bg-amber-50/20'} transition-all cursor-default`;
+                
+                // 设备标识符 / 型号
+                const deviceInfo = document.createElement('td');
+                deviceInfo.className = 'px-8 py-5';
+                deviceInfo.innerHTML = `
+                    <div class="font-bold ${device.isStable ? 'text-slate-700' : 'text-slate-800'}">${device.name}</div>
+                    <div class="text-xs font-mono text-slate-400 mt-0.5">${device.sn}</div>
+                `;
+                row.appendChild(deviceInfo);
+                
+                // 资产类型
+                const assetType = document.createElement('td');
+                assetType.className = 'px-6 py-5';
+                assetType.innerHTML = `
+                    <span class="px-2.5 py-1 rounded-md ${device.assetType === '设备' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'} text-[10px] font-black">${device.assetType}</span>
+                `;
+                row.appendChild(assetType);
+                
+                // 生命周期轨迹
+                const lifecycle = document.createElement('td');
+                lifecycle.className = 'px-6 py-5';
+                if (device.lifecycle.old === device.lifecycle.new) {
+                    lifecycle.innerHTML = `
+                        <span class="text-slate-600 font-semibold italic">${device.lifecycle.old}</span>
+                        <div class="text-[10px] text-slate-300 mt-1">${device.lifecycle.note}</div>
+                    `;
+                } else {
+                    lifecycle.innerHTML = `
+                        <div class="flex items-center gap-3">
+                            <span class="diff-old">${device.lifecycle.old}</span>
+                            <i class="fas fa-long-arrow-alt-right text-amber-400"></i>
+                            <span class="diff-new italic">${device.lifecycle.new}</span>
+                        </div>
+                        <div class="text-[10px] text-amber-600 font-bold mt-1.5 flex items-center gap-1">
+                            <i class="fas fa-clock-rotate-left"></i> ${device.lifecycle.note}
+                        </div>
+                    `;
+                }
+                row.appendChild(lifecycle);
+                
+                // 数据健康状态
+                const healthStatus = document.createElement('td');
+                healthStatus.className = 'px-6 py-5';
+                if (device.healthStatus === '今日已更新') {
+                    healthStatus.innerHTML = `
+                        <div class="flex items-center gap-2 text-amber-600 font-bold text-xs">
+                            <span class="relative flex h-2 w-2">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                            </span>
+                            今日已更新
+                        </div>
+                    `;
+                } else {
+                    healthStatus.innerHTML = `
+                        <div class="flex items-center gap-2 text-slate-400 text-xs">
+                            <i class="fas fa-check-circle text-slate-200"></i>
+                            数据稳定
+                        </div>
+                    `;
+                }
+                row.appendChild(healthStatus);
+                
+                // 变更次数
+                const changeCount = document.createElement('td');
+                changeCount.className = 'px-6 py-5';
+                changeCount.innerHTML = `
+                    <span class="px-2.5 py-1 rounded-md ${device.changeCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'} text-[10px] font-black">${device.changeCount}</span>
+                `;
+                row.appendChild(changeCount);
+                
+                // 历史溯源
+                const history = document.createElement('td');
+                history.className = 'px-8 py-5 text-right';
+                history.innerHTML = `
+                    <button onclick="openHistory('${device.sn}', ${device.isStable})" class="text-${device.isStable ? 'slate-200 hover:text-indigo-600' : 'slate-300 group-hover:text-indigo-600 transition-colors'}">
+                        <i class="fas fa-history text-lg"></i>
+                    </button>
+                `;
+                row.appendChild(history);
+                
+                tableBody.appendChild(row);
+            });
+        }
+        
+        // 更新分页信息
+        function updatePagination(result) {
+            const paginationInfo = document.getElementById('paginationInfo');
+            const start = (result.page - 1) * result.pageSize + 1;
+            const end = Math.min(result.page * result.pageSize, result.total);
+            paginationInfo.textContent = `显示 ${start} 到 ${end} 条记录，共 ${result.total} 条`;
+            
+            // 更新分页按钮状态
+            document.getElementById('prevPage').disabled = result.page === 1;
+            document.getElementById('nextPage').disabled = end >= result.total;
+        }
+        
+        // 切换页码
+        function changePage(direction) {
+            currentPage += direction;
+            if (currentPage < 1) currentPage = 1;
+            loadDevices();
+        }
+        
+        // 按变更次数排序
+        function sortByChangeCount() {
+            if (currentSortBy === 'changeCount') {
+                currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortBy = 'changeCount';
+                currentSortOrder = 'asc';
+            }
+            
+            // 更新排序图标
+            const sortIcon = document.getElementById('sortIcon');
+            sortIcon.className = currentSortOrder === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1';
+            
+            loadDevices();
+        }
+        
+        // 抽屉打开逻辑 (含空状态处理)
+        function openHistory(sn, isStable) {
+            document.getElementById('drawerSN').innerText = "DEVICE IDENTITY: " + sn;
+            const container = document.getElementById('timelineContainer');
+            
+            if(isStable) {
+                container.innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-full text-center py-20">
+                        <div class="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6">
+                            <i class="fas fa-anchor text-3xl text-slate-200"></i>
+                        </div>
+                        <h3 class="text-slate-800 font-bold mb-2">数据从未发生变更</h3>
+                        <p class="text-slate-400 text-xs px-12 leading-relaxed">该设备自入库以来，在历次的凌晨同步任务中均保持 100% 数据一致性。目前生命周期预测非常稳定。</p>
+                    </div>`;
+            } else {
+                // 查找设备的变更历史
+                const device = mockDevices.find(d => d.sn === sn);
+                
+                if (device && device.changeHistory && device.changeHistory.length > 0) {
+                    // 有多个变更历史
+                    let timelineHTML = `
+                        <div class="relative border-l-2 border-slate-100 ml-4 py-2">
+                    `;
+                    
+                    device.changeHistory.forEach((change, index) => {
+                        const isLatest = index === 0;
+                        timelineHTML += `
+                            <div class="mb-10 ml-8 relative ${!isLatest ? 'opacity-40' : ''}">
+                                <span class="absolute -left-[${isLatest ? '41' : '39'}px] top-1 bg-${isLatest ? 'amber-500' : 'slate-300'} w-${isLatest ? '5' : '4'} h-${isLatest ? '5' : '4'} rounded-full border-4 border-white shadow-sm ${isLatest ? 'ring-4 ring-amber-50' : ''}"></span>
+                                <time class="block text-[10px] font-black text-slate-400 mb-2 uppercase">${change.date}${isLatest ? ' (Latest)' : ''}</time>
+                                <div class="bg-${isLatest ? 'amber-50/50 border-amber-100' : 'white border-slate-200'} p-4 rounded-xl border">
+                                    <h4 class="text-sm font-bold text-${isLatest ? 'amber-900' : 'slate-800'}">${change.type}</h4>
+                                    <p class="text-xs text-${isLatest ? 'amber-700' : 'slate-500'} mt-2">${change.description}</p>
+                                    <div class="mt-3 text-[10px] text-${isLatest ? 'amber-600' : 'slate-400'} italic">备注：${change.note}</div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    timelineHTML += `
+                        </div>
+                    `;
+                    container.innerHTML = timelineHTML;
+                } else {
+                    // 只有单次变更历史
+                    container.innerHTML = `
+                        <div class="relative border-l-2 border-slate-100 ml-4 py-2">
+                            <div class="mb-10 ml-8 relative">
+                                <span class="absolute -left-[41px] top-1 bg-amber-500 w-5 h-5 rounded-full border-4 border-white shadow-sm ring-4 ring-amber-50"></span>
+                                <time class="block text-[10px] font-black text-slate-400 mb-2 uppercase">2026-03-03 04:00 (Latest)</time>
+                                <div class="bg-amber-50/50 p-4 rounded-xl border border-amber-100">
+                                    <h4 class="text-sm font-bold text-amber-900">数据同步：时间偏移</h4>
+                                    <p class="text-xs text-amber-700 mt-2">生命周期日期由 <span class="line-through opacity-50">2026-03-03</span> 修正为 <b>2026-12-31</b></p>
+                                    <div class="mt-3 text-[10px] text-amber-600 italic">备注：由于硬件维保记录更新，预测寿命自动顺延。</div>
+                                </div>
+                            </div>
+                            <div class="mb-10 ml-8 relative opacity-40">
+                                <span class="absolute -left-[39px] top-1 bg-slate-300 w-4 h-4 rounded-full border-4 border-white shadow-sm"></span>
+                                <time class="block text-[10px] font-black text-slate-400 mb-2 uppercase">2025-01-01 00:00</time>
+                                <div class="bg-white p-4 rounded-xl border border-slate-200">
+                                    <h4 class="text-sm font-bold text-slate-800">设备初始化入库</h4>
+                                    <p class="text-xs text-slate-500 mt-1 text-indigo-600 font-mono">2026-03-03</p>
+                                </div>
+                            </div>
+                        </div>`;
+                }
+            }
+
+            document.getElementById('historyPanel').classList.add('panel-open');
+            const overlay = document.getElementById('overlay');
+            overlay.classList.remove('hidden');
+            setTimeout(() => overlay.classList.add('opacity-100'), 10);
+        }
+
+        function closeHistory() {
+            document.getElementById('historyPanel').classList.remove('panel-open');
+            const overlay = document.getElementById('overlay');
+            overlay.classList.remove('opacity-100');
+            setTimeout(() => overlay.classList.add('hidden'), 400);
+        }
+    </script>
+</body>
+</html>
